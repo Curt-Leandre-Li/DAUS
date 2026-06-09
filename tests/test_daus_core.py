@@ -72,17 +72,21 @@ def test_non_additive_utility_uses_coalition_marginal_contribution() -> None:
             return base
 
     result = calculate_daus(
-        [utility_input("source-a", "10"), utility_input("source-b", "10")],
+        [utility_input("source-a", "10"), utility_input("source-b", "20")],
         utility_score_function=PairBonusUtility(),
     )
     by_id = attribution_by_id(result)
 
-    assert result.total_utility_score == Decimal("32")
+    standalone_total = Decimal("30")
+    standalone_share_a = by_id["source-a"].standalone_utility_score / standalone_total
+
+    assert result.total_utility_score == Decimal("42")
     assert by_id["source-a"].standalone_utility_score == Decimal("10")
-    assert by_id["source-b"].standalone_utility_score == Decimal("10")
+    assert by_id["source-b"].standalone_utility_score == Decimal("20")
     assert by_id["source-a"].shapley_value == Decimal("16")
-    assert by_id["source-b"].shapley_value == Decimal("16")
-    assert by_id["source-a"].shapley_value != by_id["source-a"].standalone_utility_score
+    assert by_id["source-b"].shapley_value == Decimal("26")
+    assert by_id["source-a"].contribution_share == Decimal("16") / Decimal("42")
+    assert by_id["source-a"].contribution_share != standalone_share_a
     assert "DAUS uses coalition marginal contribution" in " ".join(result.assumptions)
 
 

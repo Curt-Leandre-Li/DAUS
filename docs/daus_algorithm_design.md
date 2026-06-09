@@ -4,17 +4,17 @@
 
 DAUS means **Data Asset Utility Shapley**.
 
-DAUS is a Shapley-value variant for data asset contribution attribution. Its core idea is to replace the model-performance utility used by traditional Data Shapley with an auditable data-asset utility score.
+DAUS is a Shapley-value variant for data asset contribution attribution. Its core innovation is replacing the model-performance utility used by traditional Data Shapley with an auditable data-asset utility score.
 
 ```text
 Traditional Data Shapley:
-v(S) = model performance trained or evaluated on data coalition S
+v(S) = model_performance(S)
 
 DAUS:
-v_DAUS(S) = Data Asset Utility Score of coalition S
+v_DAUS(S) = utility_score(S)
 ```
 
-DAUS still computes marginal contribution over coalitions. It is not merely a weighted score table, and it is not a final revenue split.
+DAUS is not merely a scoring module. It evaluates coalition utility and computes marginal contribution attribution through the Shapley formula.
 
 ## What DAUS Is
 
@@ -22,17 +22,17 @@ DAUS provides an attribution layer:
 
 ```text
 Contribution evidence
-  -> Data-asset utility function v_DAUS(S)
-  -> Coalition marginal contribution
+  -> data-asset utility function v_DAUS(S)
+  -> coalition marginal contribution
   -> Shapley-style participant attribution
-  -> Audit record
+  -> audit record
 ```
 
-The output can support negotiation, simulation, or downstream allocation, but DAUS itself does not decide final price, contract terms, or payment.
+The output can support negotiation, simulation, or downstream decision support. DAUS itself does not decide price, payment, contract terms, or settlement.
 
 ## Relationship With Data Shapley
 
-Traditional Data Shapley uses model performance metrics such as accuracy, loss, AUC, F1, or task reward as `v(S)`. DAUS changes the definition of `v(S)`:
+Traditional Data Shapley uses model performance metrics such as accuracy, loss, AUC, F1, or task reward as `v(S)`. DAUS changes the coalition utility target:
 
 ```text
 v_DAUS(S) = UtilityScoreFunction(S)
@@ -143,11 +143,21 @@ u_i = measured_contribution_units_i
 v_DAUS(S) = sum(u_i for i in S)
 ```
 
-This additive form is a special case. In this case, Shapley attribution equals each participant's standalone additive utility contribution. DAUS is still defined at the coalition level, and callers may provide non-additive `UtilityScoreFunction` implementations.
+This additive form is only the MVP default case. In this special case, Shapley attribution equals each participant's standalone additive utility contribution. DAUS is still defined at the coalition level, and callers may provide non-additive `UtilityScoreFunction` implementations.
+
+## Non-Additive Coalition Utility
+
+DAUS supports non-additive coalition utility as an extension point. A non-additive utility function may model interaction effects such as complementarity or overlap between participants:
+
+```text
+v_DAUS({A, B}) != v_DAUS({A}) + v_DAUS({B})
+```
+
+When such interaction exists, DAUS attributes the incremental utility through Shapley marginal contribution. This is why DAUS is not just normalized standalone utility.
 
 ## Position of Shapley in DAUS
 
-Shapley is not an optional label attached after scoring. It is the attribution method DAUS uses to convert coalition utility into participant contribution.
+Shapley is the attribution method DAUS uses to convert coalition utility into participant contribution.
 
 DAUS differs from traditional Data Shapley only in the coalition utility target:
 
@@ -165,7 +175,7 @@ Every input carries:
 - `evidence`
 - optional assumptions
 
-When real measured contribution evidence exists, use `measured_data`. When evidence is expert-estimated or simulated, use `expert_estimate` or `simulation` and disclose the assumptions.
+When measured contribution evidence exists, use `measured_data`. When evidence is expert-estimated or simulated, use `expert_estimate` or `simulation` and disclose the assumptions.
 
 ## Audit Fields
 
@@ -184,15 +194,15 @@ Each DAUS result should expose:
 
 DAUS Core does not implement:
 
-- final revenue allocation
 - pricing
 - contract negotiation
-- reporting artifact generation
+- payment settlement
+- artifact generation
 - database persistence
 - authentication
 - deployment
 - domain-specific adapters
 - model training
-- hidden fallback allocation
+- hidden fallback distribution
 
-Host projects may consume DAUS results in their own allocation or reporting layers.
+Host projects may consume DAUS results in their own downstream layers.

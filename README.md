@@ -1,26 +1,66 @@
-# DAUS: Data Asset Utility Shapley
+# DAUS
 
-DAUS stands for **Data Asset Utility Shapley**. It is a Shapley-value variant for data asset contribution attribution.
+## Data Asset Utility Shapley
 
-Traditional Data Shapley usually defines coalition utility as model performance:
+DAUS is a Shapley-value variant for auditable data-asset contribution attribution.
 
-```text
-v(S) = model performance trained or evaluated on data coalition S
-```
-
-DAUS replaces that model-performance target with an auditable data-asset utility score:
+Core idea:
 
 ```text
-v_DAUS(S) = Data Asset Utility Score of coalition S
+Traditional Data Shapley:
+v(S) = model_performance(S)
+
+DAUS:
+v(S) = utility_score(S)
 ```
 
-The result is still Shapley-style marginal contribution attribution over coalitions. DAUS is not a final contract split, a pricing engine, or a simple normalized weighted score.
+For participant `i`:
+
+```text
+marginal_i(S) = v(S union {i}) - v(S)
+```
+
+DAUS preserves Shapley-style marginal contribution attribution. The innovation is replacing model-performance utility with auditable data-asset utility.
+
+## What DAUS Is
+
+DAUS is:
+
+- a data attribution algorithm
+- a Shapley-value variant
+- a coalition utility framework
+- a contribution attribution layer
+
+## What DAUS Is Not
+
+DAUS is not:
+
+- a pricing engine
+- a contractual settlement rule
+- a distributed-ledger protocol
+- a crypto-asset or coin system
+- a machine-learning framework
+- a commercial exchange platform
 
 ## Why DAUS?
 
-Data asset collaboration often needs explainable contribution attribution before there is enough evidence to run repeated model-training experiments. DAUS lets teams build `v(S)` from auditable contribution evidence such as quality, coverage, scarcity, sample scale, scenario fit, compliance usability, measured evidence, expert assumptions, or contract-agreed evidence.
+Traditional Data Shapley is powerful when `v(S)` can be evaluated through repeated model training or model-performance experiments. In many data-asset settings, that performance signal is unavailable, expensive, incomplete, or not the only auditable basis for attribution.
 
-Real model contribution evidence can be one input signal, but DAUS does not require model accuracy, loss, AUC, F1, or any other training metric to define coalition utility.
+DAUS keeps the Shapley attribution structure but lets `v(S)` be built from auditable data-asset utility evidence such as:
+
+- measured contribution units
+- quality
+- coverage
+- scarcity
+- sample scale
+- scenario fit
+- compliance usability
+- measured contribution evidence
+- expert-estimated evidence
+- contract-agreed evidence
+- simulation evidence
+
+Model contribution evidence can be one input to the utility function when available. It is not required for DAUS to run.
 
 ## Input
 
@@ -76,7 +116,7 @@ u_i = measured_contribution_units_i
 v_DAUS(S) = sum(u_i for i in S)
 ```
 
-This additive form is a special case. Under additive utility, each participant's DAUS Shapley value equals its standalone utility contribution. The API still evaluates coalitions so that non-additive utility functions can be supplied later.
+This additive form is only the MVP default case. Under additive utility, each participant's DAUS Shapley value equals its standalone utility contribution. That equality is a special case, not the full DAUS definition.
 
 DAUS attribution uses the Shapley formula:
 
@@ -93,7 +133,7 @@ DAUS is not a replacement for Shapley. It is a data-asset version of Shapley.
 - Traditional Data Shapley: `v(S)` is model performance.
 - DAUS: `v(S)` is auditable data-asset utility.
 
-This distinction is important when model-performance experiments are unavailable, incomplete, expensive, or not the right governance basis.
+This distinction matters when model-performance experiments are unavailable, incomplete, expensive, or not the right governance basis.
 
 ## Quick Start
 
@@ -145,4 +185,4 @@ for attribution in result.participant_attributions:
 - Additional coalition-level utility functions with interaction terms.
 - Stronger audit serialization helpers.
 - Reference examples for measured, expert-estimated, and simulation-based evidence.
-- Optional adapters in host projects, kept outside DAUS Core.
+- Optional host-project adapters kept outside DAUS Core.
