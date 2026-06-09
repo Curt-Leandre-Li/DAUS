@@ -1,6 +1,6 @@
 # DAUS Algorithm
 
-DAUS means **Data Asset Utility Scoring** (`数据资产效用评分`). It is an explainable and auditable contribution-utility scoring layer for multi-party data asset collaboration.
+DAUS means **Data Asset Utility Scoring**. It is an explainable and auditable contribution-utility scoring layer for multi-party data asset collaboration.
 
 DAUS converts standardized participant contribution evidence into participant utility scores, contribution shares, and audit records. The result can support revenue allocation simulation and negotiation, but it is **not** a final pricing decision, legal certification, or signed contract split.
 
