@@ -1,229 +1,198 @@
 # DAUS Algorithm Design
 
-DAUS means Data Asset Utility. It is the
-contribution-utility layer between Shuyuan metering and revenue allocation
-simulation.
+## Definition
 
-DAUS is not a pricing module, not a simple weighted table, and not a direct
-final-contract allocation algorithm. Its job is to transform multi-party,
-multi-field, multi-scenario contribution evidence into explainable and
-auditable participant utility scores that can be consumed by allocation
-simulation.
+DAUS means **Data Asset Utility Shapley**.
 
-## Position In The MVP Chain
-
-The intended dependency direction is:
+DAUS is a Shapley-value variant for data asset contribution attribution. Its core idea is to replace the model-performance utility used by traditional Data Shapley with an auditable data-asset utility score.
 
 ```text
-quality_assessment
--> shuyuan_metering
--> daus
--> allocation
--> reporting
--> demo_ui
+Traditional Data Shapley:
+v(S) = model performance trained or evaluated on data coalition S
+
+DAUS:
+v_DAUS(S) = Data Asset Utility Score of coalition S
 ```
 
-Module relationship:
+DAUS still computes marginal contribution over coalitions. It is not merely a weighted score table, and it is not a final revenue split.
 
-- `quality_assessment` produces explicit quality scores, quality factors, and
-  assumptions. DAUS may consume the public quality-related factor or score
-  supplied to it, but it must not read quality internals.
-- `shuyuan_metering` produces measured Shuyuan values using the canonical
-  formula `base_shuyuan * scenario_coefficient * quality_adjustment_factor`.
-  DAUS consumes those public Shuyuan values as contribution evidence.
-- `daus` turns participant contribution evidence into adjusted Shuyuan, DAUS
-  score, contribution share, and audit records.
-- `allocation` consumes prepared public contribution scores and applies
-  simulation schemes, contract constraints, role-pool ratios, and manual
-  confirmation rules. Allocation must not recompute DAUS.
-- `reporting` renders supplied public result objects. It may explain DAUS
-  results but must not recalculate DAUS, allocation, quality scoring, or
-  Shuyuan metering.
-- `demo_ui` presents the chain to stakeholders and must clearly distinguish
-  simulated contribution from measured contribution.
+## What DAUS Is
+
+DAUS provides an attribution layer:
+
+```text
+Contribution evidence
+  -> Data-asset utility function v_DAUS(S)
+  -> Coalition marginal contribution
+  -> Shapley-style participant attribution
+  -> Audit record
+```
+
+The output can support negotiation, simulation, or downstream allocation, but DAUS itself does not decide final price, contract terms, or payment.
+
+## Relationship With Data Shapley
+
+Traditional Data Shapley uses model performance metrics such as accuracy, loss, AUC, F1, or task reward as `v(S)`. DAUS changes the definition of `v(S)`:
+
+```text
+v_DAUS(S) = UtilityScoreFunction(S)
+```
+
+The utility score can be built from auditable data-asset signals:
+
+- measured contribution units
+- data quality
+- coverage
+- scarcity
+- sample scale
+- scenario fit
+- compliance usability
+- measured evidence
+- expert estimate
+- contract-agreed evidence
+- simulation evidence
+
+Model contribution evidence may be included as one utility signal when available. It is not required for DAUS to run.
 
 ## Inputs
 
-Each DAUS contribution input represents one participant's standardized
-contribution evidence for a scenario.
+Canonical input object: `DataAssetUtilityInput`.
 
-Required MVP fields:
+Required fields:
 
 - `participant_id`
 - `role`
-- `measured_shuyuan`
+- `measured_contribution_units`
 - `quality_score`
-- `scenario_factor`
 - `coverage_score`
 - `scarcity_score`
 - `sample_score`
-- `model_contribution_score`
-- `expert_score`
 - `contribution_source_type`
 - `confidence_level`
 - `evidence`
 
-Allowed `contribution_source_type` values:
+Optional fields:
+
+- `scenario_fit_score`
+- `compliance_usability_score`
+- `model_contribution_score`
+- `expert_score`
+- `assumptions`
+
+Allowed source types:
 
 - `measured_data`
 - `expert_estimate`
 - `contract_agreement`
 - `simulation`
 
-Source type is provenance. It must not be used as a hidden multiplier or score
-boost.
+Source type is provenance. It is not a hidden multiplier.
 
 ## Outputs
 
-DAUS outputs:
+Canonical result object: `DAUSShapleyResult`.
 
-- participant vectors with adjusted Shuyuan and factor details;
-- `daus_score` for each participant;
-- normalized contribution share for each participant;
-- whether Shapley/marginal contribution calculation was used;
-- whether the basis is measured, expert-estimated, contract-agreed, or
-  simulated;
-- assumptions;
-- audit records with source type, confidence, config, and evidence.
+It contains:
 
-The output is negotiation and simulation support. It is not a final price
-decision and not a signed revenue contract.
+- evaluated `DataAssetCoalition` records
+- coalition utility scores `v_DAUS(S)`
+- `ParticipantShapleyAttribution` records
+- Shapley values
+- contribution shares
+- source types
+- confidence levels
+- assumptions
+- audit records
+- not-applicable reason when needed
 
 ## Core Flow
 
-1. Validate participant inputs and reject duplicates.
-2. Validate non-negative Shuyuan values and positive factors.
-3. Convert public score fields into deterministic factors.
-4. Calculate each participant's adjusted Shuyuan.
-5. Build the data-asset coalition `S`.
-6. Calculate coalition utility using the DAUS utility function.
-7. If model/field contribution data is available and Shapley is enabled, compute
-   marginal contribution over the DAUS utility function.
-8. Otherwise use deterministic adjusted-Shuyuan contribution mode and mark the
-   result as simulation/expert-supported where appropriate.
-9. Normalize DAUS scores into contribution shares.
-10. Emit audit records and assumptions.
+1. Validate participant contribution evidence.
+2. Build every coalition `S` needed by the Shapley calculation.
+3. Evaluate `v_DAUS(S)` with a `UtilityScoreFunction`.
+4. For each participant `i`, compute marginal utility:
 
-## MVP Formula
+   ```text
+   marginal_i(S) = v_DAUS(S union {i}) - v_DAUS(S)
+   ```
 
-Participant adjusted Shuyuan:
+5. Compute Shapley attribution:
 
-```text
-adjusted_shuyuan_i =
-  measured_shuyuan_i
-  * quality_factor_i
-  * scenario_factor_i
-  * coverage_factor_i
-  * scarcity_factor_i
-  * sample_factor_i
-```
+   ```text
+   phi_i = sum over S subset N\{i} of
+           |S|! * (|N|-|S|-1)! / |N|!
+           * marginal_i(S)
+   ```
 
-MVP score-to-factor policy:
+6. Normalize Shapley values into contribution shares when total contribution is positive.
+7. Emit audit records and assumptions.
+
+## MVP Utility Function
+
+The default MVP utility function is additive and explainable:
 
 ```text
-factor = score / 100
+u_i = measured_contribution_units_i
+    * quality_factor_i
+    * coverage_factor_i
+    * scarcity_factor_i
+    * sample_factor_i
+    * scenario_fit_factor_i
+    * compliance_usability_factor_i
+
+v_DAUS(S) = sum(u_i for i in S)
 ```
 
-Scores must be in `[0, 100]`. `scenario_factor` must be positive.
-`measured_shuyuan` must be non-negative.
+This additive form is a special case. In this case, Shapley attribution equals each participant's standalone additive utility contribution. DAUS is still defined at the coalition level, and callers may provide non-additive `UtilityScoreFunction` implementations.
 
-Coalition utility:
+## Position of Shapley in DAUS
 
-```text
-utility(S) =
-  sum(adjusted_shuyuan_i for i in S)
-  * (1 + optional_interaction_bonus(S))
-  - optional_risk_penalty(S)
-```
+Shapley is not an optional label attached after scoring. It is the attribution method DAUS uses to convert coalition utility into participant contribution.
 
-In the MVP, `optional_interaction_bonus(S)` and
-`optional_risk_penalty(S)` are explicit extension hooks and default to `0`.
-They must not read metadata as a hidden scoring channel.
+DAUS differs from traditional Data Shapley only in the coalition utility target:
 
-## Shapley In DAUS
+- traditional Data Shapley uses model performance as `v(S)`;
+- DAUS uses auditable data-asset utility as `v(S)`.
 
-Shapley is placed in the DAUS contribution-utility layer. It is a way to turn
-coalition marginal contribution into contribution weights.
+## Measured vs Simulated Contribution
 
-Shapley is not the final revenue allocation layer. Final allocation still needs
-contract constraints, role-pool ratios, negotiation, authorization scope,
-manual confirmation, and audit records.
+DAUS must not disguise simulated evidence as measured evidence.
 
-DAUS may use Shapley only when field/model contribution evidence is present.
-When that evidence is absent, DAUS must not fabricate a Shapley result. It may
-produce a deterministic adjusted-Shuyuan contribution result and mark the basis
-as expert estimate, contract agreement, or simulation.
+Every input carries:
 
-## With Model Contribution Data
+- `contribution_source_type`
+- `confidence_level`
+- `evidence`
+- optional assumptions
 
-When model or field contribution data is supplied:
-
-- the input must expose `model_contribution_score` or equivalent prepared
-  contribution evidence;
-- DAUS may compute marginal contribution against the DAUS utility function;
-- the result must set `used_shapley = true`;
-- the result must preserve source type, confidence level, evidence, and
-  assumptions.
-
-The MVP utility function is additive unless a future approved phase supplies
-documented interaction or risk functions. Therefore, Shapley values over the
-default utility function are explainable and deterministic.
-
-## Without Real Model Contribution Data
-
-When real model contribution evidence is not available:
-
-- DAUS may use `expert_estimate`, `contract_agreement`, or `simulation` inputs;
-- the result must set `used_shapley = false`;
-- the result must explicitly say it is not measured model contribution;
-- reports and UI must not present the result as measured Shapley output.
-
-This is not deceptive because the result carries its evidence basis, source
-type, confidence, and assumptions. Simulated contribution is acceptable for
-business explanation only when it is labelled as simulated.
+When real measured contribution evidence exists, use `measured_data`. When evidence is expert-estimated or simulated, use `expert_estimate` or `simulation` and disclose the assumptions.
 
 ## Audit Fields
 
-Each DAUS audit record should include:
+Each DAUS result should expose:
 
-- `event_type`
-- `participant_id`, when applicable;
-- `source_type`;
-- `confidence_level`;
-- `config`;
-- `assumptions`;
-- `evidence`;
-- `message`.
-
-Audit records support review and negotiation. They are not legal
-certification.
+- utility function name
+- config id
+- participant source type
+- participant confidence level
+- evidence summary
+- evaluated coalition utilities
+- assumptions
+- not-applicable reason when applicable
 
 ## MVP Non-Goals
 
-DAUS MVP does not implement:
+DAUS Core does not implement:
 
-- pricing;
-- MAR or compliance-cap logic;
-- database persistence;
-- authentication;
-- production API integration;
-- real hospital integration;
-- real patient data processing;
-- legal certification;
-- complex interaction models;
-- hidden metadata scoring;
-- final signed contract allocation.
+- final revenue allocation
+- pricing
+- contract negotiation
+- reporting artifact generation
+- database persistence
+- authentication
+- deployment
+- domain-specific adapters
+- model training
+- hidden fallback allocation
 
-## Legacy Compatibility
-
-The canonical implementation is `src/daus/`.
-
-`src/shuyuan_metering/daus.py` is legacy compatibility only. It exists so older
-imports can continue to resolve while callers migrate to `src.daus` or `daus`.
-The legacy surface must not contain independent DAUS calculation logic. Any
-supported compatibility function must convert old input objects into canonical
-DAUS inputs and delegate to `calculate_daus()` or
-`daus_result_to_contribution_input_batch()`.
-
-No new DAUS feature, scoring formula, Shapley behavior, or allocation adapter
-logic should be added to `src/shuyuan_metering/daus.py`.
+Host projects may consume DAUS results in their own allocation or reporting layers.

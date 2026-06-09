@@ -4,118 +4,153 @@ from dataclasses import replace
 from decimal import Decimal
 from itertools import combinations
 from math import factorial
+from typing import Mapping
 
 from .schemas import (
-    DAUSContributionInput,
-    DAUSParticipantVector,
-    DAUSUtilityConfig,
+    DAUSShapleyConfig,
+    DataAssetCoalition,
+    DataAssetUtilityInput,
+    ParticipantShapleyAttribution,
 )
 
 
-def score_to_factor(score: Decimal, config: DAUSUtilityConfig) -> Decimal:
+def score_to_factor(score: Decimal, config: DAUSShapleyConfig) -> Decimal:
+    """Convert a 0-100 utility signal into a multiplicative factor."""
     return score / config.score_factor_scale
 
 
-def build_participant_vector(
-    contribution_input: DAUSContributionInput,
-    config: DAUSUtilityConfig,
-) -> DAUSParticipantVector:
-    quality_factor = score_to_factor(contribution_input.quality_score, config)
-    coverage_factor = score_to_factor(contribution_input.coverage_score, config)
-    scarcity_factor = score_to_factor(contribution_input.scarcity_score, config)
-    sample_factor = score_to_factor(contribution_input.sample_score, config)
-    adjusted_shuyuan = (
-        contribution_input.measured_shuyuan
-        * quality_factor
-        * contribution_input.scenario_factor
-        * coverage_factor
-        * scarcity_factor
-        * sample_factor
-    )
-    return DAUSParticipantVector(
-        participant_id=contribution_input.participant_id,
-        role=contribution_input.role,
-        measured_shuyuan=contribution_input.measured_shuyuan,
-        adjusted_shuyuan=adjusted_shuyuan,
-        daus_score=adjusted_shuyuan,
-        contribution_share=Decimal("0"),
-        quality_factor=quality_factor,
-        scenario_factor=contribution_input.scenario_factor,
-        coverage_factor=coverage_factor,
-        scarcity_factor=scarcity_factor,
-        sample_factor=sample_factor,
-        contribution_source_type=contribution_input.contribution_source_type,
-        confidence_level=contribution_input.confidence_level,
-        evidence=contribution_input.evidence,
-        model_contribution_score=contribution_input.model_contribution_score,
-        expert_score=contribution_input.expert_score,
-    )
+class UtilityScoreFunction:
+    """Callable v(S) for DAUS coalition utility evaluation.
+
+    The default implementation is additive and auditable. It is an MVP utility
+    score function; callers may provide a subclass or callable for coalition
+    interactions while keeping the Shapley attribution contract unchanged.
+    """
+
+    name = "additive_data_asset_utility"
+
+    def individual_utility_score(
+        self,
+        evidence: DataAssetUtilityInput,
+        config: DAUSShapleyConfig,
+    ) -> Decimal:
+        return (
+            evidence.measured_contribution_units
+            * score_to_factor(evidence.quality_score, config)
+            * score_to_factor(evidence.coverage_score, config)
+            * score_to_factor(evidence.scarcity_score, config)
+            * score_to_factor(evidence.sample_score, config)
+            * score_to_factor(evidence.scenario_fit_score, config)
+            * score_to_factor(evidence.compliance_usability_score, config)
+        )
+
+    def __call__(
+        self,
+        coalition: DataAssetCoalition,
+        inputs_by_participant_id: Mapping[str, DataAssetUtilityInput],
+        config: DAUSShapleyConfig,
+    ) -> Decimal:
+        return sum(
+            self.individual_utility_score(inputs_by_participant_id[participant_id], config)
+            for participant_id in coalition.participant_ids
+        )
 
 
-def coalition_utility(
-    vectors: tuple[DAUSParticipantVector, ...],
+def build_inputs_by_participant_id(
+    inputs: tuple[DataAssetUtilityInput, ...],
+) -> dict[str, DataAssetUtilityInput]:
+    result: dict[str, DataAssetUtilityInput] = {}
+    for item in inputs:
+        if item.participant_id in result:
+            raise ValueError(f"duplicate participant_id: {item.participant_id}")
+        result[item.participant_id] = item
+    return result
+
+
+def coalition_ids(participant_ids: tuple[str, ...]) -> tuple[frozenset[str], ...]:
+    coalitions: list[frozenset[str]] = []
+    for size in range(len(participant_ids) + 1):
+        for subset in combinations(participant_ids, size):
+            coalitions.append(frozenset(subset))
+    return tuple(coalitions)
+
+
+def evaluate_coalition(
     participant_ids: frozenset[str],
-    config: DAUSUtilityConfig,
-) -> Decimal:
-    if not participant_ids:
-        return Decimal("0")
-    base_utility = sum(
-        vector.adjusted_shuyuan
-        for vector in vectors
-        if vector.participant_id in participant_ids
-    )
-    return base_utility * (Decimal("1") + config.interaction_bonus) - config.risk_penalty
+    inputs_by_participant_id: Mapping[str, DataAssetUtilityInput],
+    config: DAUSShapleyConfig,
+    utility_score_function: UtilityScoreFunction,
+) -> DataAssetCoalition:
+    empty_score_coalition = DataAssetCoalition(participant_ids=participant_ids)
+    utility_score = utility_score_function(empty_score_coalition, inputs_by_participant_id, config)
+    return DataAssetCoalition(participant_ids=participant_ids, utility_score=utility_score)
 
 
-def calculate_shapley_scores(
-    vectors: tuple[DAUSParticipantVector, ...],
-    config: DAUSUtilityConfig,
-) -> dict[str, Decimal]:
-    participant_ids = tuple(vector.participant_id for vector in vectors)
-    participant_count = len(participant_ids)
-    if participant_count == 0:
-        return {}
-
-    denominator = Decimal(factorial(participant_count))
-    scores = {participant_id: Decimal("0") for participant_id in participant_ids}
-    for participant_id in participant_ids:
-        others = tuple(item for item in participant_ids if item != participant_id)
-        for subset_size in range(len(others) + 1):
-            for subset in combinations(others, subset_size):
-                coalition = frozenset(subset)
-                coalition_with_participant = coalition | {participant_id}
-                weight = Decimal(
-                    factorial(subset_size)
-                    * factorial(participant_count - subset_size - 1)
-                ) / denominator
-                marginal_contribution = coalition_utility(
-                    vectors,
-                    coalition_with_participant,
-                    config,
-                ) - coalition_utility(vectors, coalition, config)
-                scores[participant_id] += weight * marginal_contribution
-    return scores
-
-
-def apply_scores_to_vectors(
-    vectors: tuple[DAUSParticipantVector, ...],
-    scores: dict[str, Decimal],
-) -> tuple[DAUSParticipantVector, ...]:
-    total_score = sum(scores.values())
-    if total_score <= 0:
-        return tuple(
-            replace(
-                vector,
-                daus_score=scores.get(vector.participant_id, Decimal("0")),
-                contribution_share=Decimal("0"),
-            )
-            for vector in vectors
-        )
+def evaluate_all_coalitions(
+    participant_ids: tuple[str, ...],
+    inputs_by_participant_id: Mapping[str, DataAssetUtilityInput],
+    config: DAUSShapleyConfig,
+    utility_score_function: UtilityScoreFunction,
+) -> tuple[DataAssetCoalition, ...]:
     return tuple(
-        replace(
-            vector,
-            daus_score=scores[vector.participant_id],
-            contribution_share=scores[vector.participant_id] / total_score,
-        )
-        for vector in vectors
+        evaluate_coalition(ids, inputs_by_participant_id, config, utility_score_function)
+        for ids in coalition_ids(participant_ids)
     )
+
+
+def calculate_raw_shapley_attributions(
+    inputs: tuple[DataAssetUtilityInput, ...],
+    inputs_by_participant_id: Mapping[str, DataAssetUtilityInput],
+    config: DAUSShapleyConfig,
+    utility_score_function: UtilityScoreFunction,
+) -> tuple[ParticipantShapleyAttribution, ...]:
+    participant_ids = tuple(item.participant_id for item in inputs)
+    participant_count = len(participant_ids)
+    denominator = Decimal(factorial(participant_count))
+    attributions: list[ParticipantShapleyAttribution] = []
+
+    for item in inputs:
+        others = tuple(participant_id for participant_id in participant_ids if participant_id != item.participant_id)
+        shapley_value = Decimal("0")
+        marginal_values: list[Decimal] = []
+        for size in range(len(others) + 1):
+            for subset in combinations(others, size):
+                subset_ids = frozenset(subset)
+                with_item_ids = frozenset((*subset, item.participant_id))
+                before = evaluate_coalition(subset_ids, inputs_by_participant_id, config, utility_score_function)
+                after = evaluate_coalition(with_item_ids, inputs_by_participant_id, config, utility_score_function)
+                marginal = after.utility_score - before.utility_score
+                weight = Decimal(factorial(size) * factorial(participant_count - size - 1)) / denominator
+                shapley_value += weight * marginal
+                marginal_values.append(marginal)
+
+        standalone = evaluate_coalition(
+            frozenset({item.participant_id}),
+            inputs_by_participant_id,
+            config,
+            utility_score_function,
+        )
+        attributions.append(
+            ParticipantShapleyAttribution(
+                participant_id=item.participant_id,
+                role=item.role,
+                standalone_utility_score=standalone.utility_score,
+                shapley_value=shapley_value,
+                contribution_share=Decimal("0"),
+                contribution_source_type=item.contribution_source_type,
+                confidence_level=item.confidence_level,
+                evidence=item.evidence,
+                marginal_contributions=tuple(marginal_values),
+                assumptions=item.assumptions,
+            )
+        )
+    return tuple(attributions)
+
+
+def apply_contribution_shares(
+    attributions: tuple[ParticipantShapleyAttribution, ...],
+) -> tuple[ParticipantShapleyAttribution, ...]:
+    total = sum(item.shapley_value for item in attributions)
+    if total <= 0:
+        return attributions
+    return tuple(replace(item, contribution_share=item.shapley_value / total) for item in attributions)

@@ -2,97 +2,69 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping
-
+from math import isfinite
+from typing import Mapping
 
 DAUS_SOURCE_TYPES = frozenset(
     {"measured_data", "expert_estimate", "contract_agreement", "simulation"}
 )
-
 DAUS_STATUS_APPLICABLE = "applicable"
 DAUS_STATUS_NOT_APPLICABLE = "not_applicable"
-
-DAUS_MODE_ADJUSTED_SHUYUAN = "adjusted_shuyuan"
-DAUS_MODE_SHAPLEY = "shapley_marginal_contribution"
-
-DAUS_SHAPLEY_AUTO = "auto"
-DAUS_SHAPLEY_DISABLED = "disabled"
-DAUS_SHAPLEY_REQUIRED = "required"
+DAUS_MODE_SHAPLEY = "data_asset_utility_shapley"
 
 
-def require_text(value: str, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be text.")
-    cleaned = value.strip()
-    if not cleaned:
-        raise ValueError(f"{field_name} is required.")
-    return cleaned
+def to_decimal(value: Decimal | int | float | str, field_name: str) -> Decimal:
+    if isinstance(value, float) and not isfinite(value):
+        raise ValueError(f"{field_name} must be finite")
+    try:
+        converted = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a valid Decimal value") from exc
+    if converted.is_nan() or converted.is_infinite():
+        raise ValueError(f"{field_name} must be finite")
+    return converted
 
 
-def optional_text(value: str, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be text.")
+def require_non_empty(value: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is required")
     return value.strip()
 
 
-def to_decimal(value: Any, field_name: str) -> Decimal:
-    if value is None or isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a valid Decimal.")
-    try:
-        decimal_value = value if isinstance(value, Decimal) else Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a valid Decimal.") from exc
-    if not decimal_value.is_finite():
-        raise ValueError(f"{field_name} must be a finite Decimal.")
-    return decimal_value
+def require_non_negative_decimal(value: Decimal | int | float | str, field_name: str) -> Decimal:
+    converted = to_decimal(value, field_name)
+    if converted < 0:
+        raise ValueError(f"{field_name} must be >= 0")
+    return converted
 
 
-def require_non_negative_decimal(value: Any, field_name: str) -> Decimal:
-    decimal_value = to_decimal(value, field_name)
-    if decimal_value < 0:
-        raise ValueError(f"{field_name} must be non-negative.")
-    return decimal_value
+def require_score(value: Decimal | int | float | str, field_name: str) -> Decimal:
+    converted = require_non_negative_decimal(value, field_name)
+    if converted > 100:
+        raise ValueError(f"{field_name} must be <= 100")
+    return converted
 
 
-def require_positive_decimal(value: Any, field_name: str) -> Decimal:
-    decimal_value = to_decimal(value, field_name)
-    if decimal_value <= 0:
-        raise ValueError(f"{field_name} must be positive.")
-    return decimal_value
+def require_confidence(value: Decimal | int | float | str, field_name: str) -> Decimal:
+    converted = require_non_negative_decimal(value, field_name)
+    if converted > 1:
+        raise ValueError(f"{field_name} must be <= 1")
+    return converted
 
 
-def require_score(value: Any, field_name: str) -> Decimal:
-    decimal_value = to_decimal(value, field_name)
-    if decimal_value < 0 or decimal_value > 100:
-        raise ValueError(f"{field_name} must be within [0, 100].")
-    return decimal_value
+def normalize_assumptions(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    if values is None:
+        return ()
+    return tuple(require_non_empty(value, "assumption") for value in values)
 
 
-def optional_score(value: Any, field_name: str) -> Decimal | None:
-    if value is None:
-        return None
-    return require_score(value, field_name)
+@dataclass(frozen=True)
+class DataAssetUtilityInput:
+    """Evidence for one subject in a DAUS attribution run."""
 
-
-def normalize_source_type(source_type: str) -> str:
-    cleaned = require_text(source_type, "contribution_source_type")
-    if cleaned not in DAUS_SOURCE_TYPES:
-        allowed = ", ".join(sorted(DAUS_SOURCE_TYPES))
-        raise ValueError(f"contribution_source_type must be one of: {allowed}.")
-    return cleaned
-
-
-def normalize_assumptions(assumptions: tuple[str, ...] | list[str]) -> tuple[str, ...]:
-    if isinstance(assumptions, str) or not isinstance(assumptions, (tuple, list)):
-        raise ValueError("assumptions must be a tuple or list of text items.")
-    return tuple(require_text(assumption, "assumption") for assumption in assumptions)
-
-
-@dataclass(frozen=True, slots=True)
-class DAUSContributionInput:
     participant_id: str
     role: str
-    measured_shuyuan: Decimal
+    measured_contribution_units: Decimal
     quality_score: Decimal
     coverage_score: Decimal
     scarcity_score: Decimal
@@ -100,241 +72,204 @@ class DAUSContributionInput:
     contribution_source_type: str
     confidence_level: Decimal
     evidence: str
-    scenario_factor: Decimal = Decimal("1")
+    scenario_fit_score: Decimal = Decimal("100")
+    compliance_usability_score: Decimal = Decimal("100")
     model_contribution_score: Decimal | None = None
     expert_score: Decimal | None = None
-    assumptions: tuple[str, ...] | list[str] = field(default_factory=tuple)
+    assumptions: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "participant_id", require_non_empty(self.participant_id, "participant_id"))
+        object.__setattr__(self, "role", require_non_empty(self.role, "role"))
         object.__setattr__(
             self,
-            "participant_id",
-            require_text(self.participant_id, "participant_id"),
-        )
-        object.__setattr__(self, "role", require_text(self.role, "role"))
-        object.__setattr__(
-            self,
-            "measured_shuyuan",
-            require_non_negative_decimal(self.measured_shuyuan, "measured_shuyuan"),
+            "measured_contribution_units",
+            require_non_negative_decimal(self.measured_contribution_units, "measured_contribution_units"),
         )
         for field_name in (
             "quality_score",
             "coverage_score",
             "scarcity_score",
             "sample_score",
+            "scenario_fit_score",
+            "compliance_usability_score",
         ):
+            object.__setattr__(self, field_name, require_score(getattr(self, field_name), field_name))
+        if self.model_contribution_score is not None:
             object.__setattr__(
                 self,
-                field_name,
-                require_score(getattr(self, field_name), field_name),
+                "model_contribution_score",
+                require_score(self.model_contribution_score, "model_contribution_score"),
+            )
+        if self.expert_score is not None:
+            object.__setattr__(self, "expert_score", require_score(self.expert_score, "expert_score"))
+        if self.contribution_source_type not in DAUS_SOURCE_TYPES:
+            raise ValueError(
+                "contribution_source_type must be one of "
+                + ", ".join(sorted(DAUS_SOURCE_TYPES))
             )
         object.__setattr__(
             self,
-            "scenario_factor",
-            require_positive_decimal(self.scenario_factor, "scenario_factor"),
+            "confidence_level",
+            require_confidence(self.confidence_level, "confidence_level"),
         )
-        object.__setattr__(
-            self,
-            "model_contribution_score",
-            optional_score(self.model_contribution_score, "model_contribution_score"),
-        )
-        object.__setattr__(
-            self,
-            "expert_score",
-            optional_score(self.expert_score, "expert_score"),
-        )
-        object.__setattr__(
-            self,
-            "contribution_source_type",
-            normalize_source_type(self.contribution_source_type),
-        )
-        confidence_level = to_decimal(self.confidence_level, "confidence_level")
-        if confidence_level < 0 or confidence_level > 1:
-            raise ValueError("confidence_level must be within [0, 1].")
-        object.__setattr__(self, "confidence_level", confidence_level)
-        object.__setattr__(self, "evidence", require_text(self.evidence, "evidence"))
-        object.__setattr__(
-            self,
-            "assumptions",
-            normalize_assumptions(self.assumptions),
-        )
+        object.__setattr__(self, "evidence", require_non_empty(self.evidence, "evidence"))
+        object.__setattr__(self, "assumptions", normalize_assumptions(self.assumptions))
 
 
-@dataclass(frozen=True, slots=True)
-class DAUSUtilityConfig:
-    config_id: str = "daus_mvp_v1"
-    shapley_mode: str = DAUS_SHAPLEY_AUTO
+@dataclass(frozen=True)
+class DataAssetCoalition:
+    """A coalition S and its evaluated utility score v(S)."""
+
+    participant_ids: frozenset[str]
+    utility_score: Decimal = Decimal("0")
+
+    def __post_init__(self) -> None:
+        ids = frozenset(require_non_empty(participant_id, "participant_id") for participant_id in self.participant_ids)
+        object.__setattr__(self, "participant_ids", ids)
+        object.__setattr__(self, "utility_score", require_non_negative_decimal(self.utility_score, "utility_score"))
+
+
+@dataclass(frozen=True)
+class DAUSShapleyConfig:
+    """Configuration for Data Asset Utility Shapley attribution."""
+
+    config_id: str = "daus_shapley_v1"
     score_factor_scale: Decimal = Decimal("100")
-    interaction_bonus: Decimal = Decimal("0")
-    risk_penalty: Decimal = Decimal("0")
-    assumptions: tuple[str, ...] | list[str] = (
-        "DAUS MVP uses deterministic score-to-factor mapping.",
-        "DAUS outputs support negotiation and simulation, not final contract split.",
+    assumptions: tuple[str, ...] = (
+        "DAUS defines v(S) as a data-asset utility score function over coalitions.",
+        "The default additive utility function is an MVP special case, not the complete DAUS definition.",
     )
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "config_id", require_text(self.config_id, "config_id"))
-        if self.shapley_mode not in {
-            DAUS_SHAPLEY_AUTO,
-            DAUS_SHAPLEY_DISABLED,
-            DAUS_SHAPLEY_REQUIRED,
-        }:
-            raise ValueError("shapley_mode must be auto, disabled, or required.")
-        scale = require_positive_decimal(self.score_factor_scale, "score_factor_scale")
+        object.__setattr__(self, "config_id", require_non_empty(self.config_id, "config_id"))
+        scale = require_non_negative_decimal(self.score_factor_scale, "score_factor_scale")
+        if scale <= 0:
+            raise ValueError("score_factor_scale must be > 0")
         object.__setattr__(self, "score_factor_scale", scale)
-        object.__setattr__(
-            self,
-            "interaction_bonus",
-            require_non_negative_decimal(self.interaction_bonus, "interaction_bonus"),
-        )
-        object.__setattr__(
-            self,
-            "risk_penalty",
-            require_non_negative_decimal(self.risk_penalty, "risk_penalty"),
-        )
-        object.__setattr__(
-            self,
-            "assumptions",
-            normalize_assumptions(self.assumptions),
-        )
-
-    def public_dict(self) -> dict[str, str]:
-        return {
-            "config_id": self.config_id,
-            "shapley_mode": self.shapley_mode,
-            "score_factor_scale": str(self.score_factor_scale),
-            "interaction_bonus": str(self.interaction_bonus),
-            "risk_penalty": str(self.risk_penalty),
-        }
+        object.__setattr__(self, "assumptions", normalize_assumptions(self.assumptions))
 
 
-@dataclass(frozen=True, slots=True)
-class DAUSParticipantVector:
+@dataclass(frozen=True)
+class ParticipantShapleyAttribution:
+    """Shapley-style participant attribution under the DAUS utility function."""
+
     participant_id: str
     role: str
-    measured_shuyuan: Decimal
-    adjusted_shuyuan: Decimal
-    daus_score: Decimal
+    standalone_utility_score: Decimal
+    shapley_value: Decimal
     contribution_share: Decimal
-    quality_factor: Decimal
-    scenario_factor: Decimal
-    coverage_factor: Decimal
-    scarcity_factor: Decimal
-    sample_factor: Decimal
     contribution_source_type: str
     confidence_level: Decimal
     evidence: str
-    model_contribution_score: Decimal | None = None
-    expert_score: Decimal | None = None
+    marginal_contributions: tuple[Decimal, ...] = field(default_factory=tuple)
+    assumptions: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "participant_id", require_non_empty(self.participant_id, "participant_id"))
+        object.__setattr__(self, "role", require_non_empty(self.role, "role"))
         object.__setattr__(
             self,
-            "participant_id",
-            require_text(self.participant_id, "participant_id"),
+            "standalone_utility_score",
+            to_decimal(self.standalone_utility_score, "standalone_utility_score"),
         )
-        object.__setattr__(self, "role", require_text(self.role, "role"))
-        for field_name in (
-            "measured_shuyuan",
-            "adjusted_shuyuan",
-            "daus_score",
-            "contribution_share",
-            "quality_factor",
-            "scenario_factor",
-            "coverage_factor",
-            "scarcity_factor",
-            "sample_factor",
-            "confidence_level",
-        ):
-            object.__setattr__(
-                self,
-                field_name,
-                require_non_negative_decimal(getattr(self, field_name), field_name),
-            )
+        object.__setattr__(self, "shapley_value", to_decimal(self.shapley_value, "shapley_value"))
+        object.__setattr__(self, "contribution_share", to_decimal(self.contribution_share, "contribution_share"))
+        if self.contribution_source_type not in DAUS_SOURCE_TYPES:
+            raise ValueError("invalid contribution_source_type")
+        object.__setattr__(self, "confidence_level", require_confidence(self.confidence_level, "confidence_level"))
+        object.__setattr__(self, "evidence", require_non_empty(self.evidence, "evidence"))
         object.__setattr__(
             self,
-            "contribution_source_type",
-            normalize_source_type(self.contribution_source_type),
+            "marginal_contributions",
+            tuple(to_decimal(value, "marginal_contribution") for value in self.marginal_contributions),
         )
-        object.__setattr__(self, "evidence", require_text(self.evidence, "evidence"))
+        object.__setattr__(self, "assumptions", normalize_assumptions(self.assumptions))
+
+    @property
+    def daus_score(self) -> Decimal:
+        """Deprecated compatibility alias for shapley_value."""
+        return self.shapley_value
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DAUSAuditRecord:
     event_type: str
-    source_type: str
-    config: Mapping[str, str]
-    assumptions: tuple[str, ...] | list[str]
-    message: str
-    participant_id: str = ""
-    confidence_level: Decimal = Decimal("0")
-    evidence: str = ""
+    participant_id: str | None
+    description: str
+    source_type: str | None
+    config_id: str
+    assumptions: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "event_type", require_text(self.event_type, "event_type"))
-        object.__setattr__(self, "source_type", normalize_source_type(self.source_type))
-        object.__setattr__(self, "config", dict(self.config))
+        object.__setattr__(self, "event_type", require_non_empty(self.event_type, "event_type"))
+        if self.participant_id is not None:
+            object.__setattr__(self, "participant_id", require_non_empty(self.participant_id, "participant_id"))
+        object.__setattr__(self, "description", require_non_empty(self.description, "description"))
+        if self.source_type is not None and self.source_type not in DAUS_SOURCE_TYPES:
+            raise ValueError("invalid source_type")
+        object.__setattr__(self, "config_id", require_non_empty(self.config_id, "config_id"))
         object.__setattr__(self, "assumptions", normalize_assumptions(self.assumptions))
-        object.__setattr__(self, "message", require_text(self.message, "message"))
-        if self.participant_id:
-            object.__setattr__(self, "participant_id", self.participant_id.strip())
-        object.__setattr__(
-            self,
-            "confidence_level",
-            require_non_negative_decimal(self.confidence_level, "confidence_level"),
-        )
-        if self.evidence:
-            object.__setattr__(self, "evidence", self.evidence.strip())
 
 
-@dataclass(frozen=True, slots=True)
-class DAUSResult:
+@dataclass(frozen=True)
+class DAUSShapleyResult:
     status: str
-    participant_vectors: tuple[DAUSParticipantVector, ...]
-    total_daus_score: Decimal
+    participant_attributions: tuple[ParticipantShapleyAttribution, ...]
+    coalitions: tuple[DataAssetCoalition, ...]
+    total_utility_score: Decimal
     contribution_shares: Mapping[str, Decimal]
-    used_shapley: bool
     calculation_mode: str
+    utility_score_function: str
     source_types: tuple[str, ...]
     assumptions: tuple[str, ...]
     audit_records: tuple[DAUSAuditRecord, ...]
-    not_applicable_reason: str = ""
+    not_applicable_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {DAUS_STATUS_APPLICABLE, DAUS_STATUS_NOT_APPLICABLE}:
-            raise ValueError("status must be applicable or not_applicable.")
-        object.__setattr__(self, "participant_vectors", tuple(self.participant_vectors))
-        object.__setattr__(
-            self,
-            "total_daus_score",
-            require_non_negative_decimal(self.total_daus_score, "total_daus_score"),
-        )
+            raise ValueError("invalid DAUS result status")
+        object.__setattr__(self, "participant_attributions", tuple(self.participant_attributions))
+        object.__setattr__(self, "coalitions", tuple(self.coalitions))
+        object.__setattr__(self, "total_utility_score", require_non_negative_decimal(self.total_utility_score, "total_utility_score"))
         object.__setattr__(
             self,
             "contribution_shares",
-            {
-                require_text(participant_id, "participant_id"): require_non_negative_decimal(
-                    share,
-                    "contribution_share",
-                )
-                for participant_id, share in dict(self.contribution_shares).items()
-            },
+            {require_non_empty(key, "participant_id"): to_decimal(value, "contribution_share") for key, value in self.contribution_shares.items()},
         )
+        object.__setattr__(self, "calculation_mode", require_non_empty(self.calculation_mode, "calculation_mode"))
         object.__setattr__(
             self,
-            "calculation_mode",
-            require_text(self.calculation_mode, "calculation_mode"),
+            "utility_score_function",
+            require_non_empty(self.utility_score_function, "utility_score_function"),
         )
-        object.__setattr__(
-            self,
-            "source_types",
-            tuple(normalize_source_type(source_type) for source_type in self.source_types),
-        )
+        object.__setattr__(self, "source_types", tuple(sorted(set(self.source_types))))
         object.__setattr__(self, "assumptions", normalize_assumptions(self.assumptions))
         object.__setattr__(self, "audit_records", tuple(self.audit_records))
-        if self.not_applicable_reason:
+        if self.not_applicable_reason is not None:
             object.__setattr__(
                 self,
                 "not_applicable_reason",
-                self.not_applicable_reason.strip(),
+                require_non_empty(self.not_applicable_reason, "not_applicable_reason"),
             )
+
+    @property
+    def used_shapley(self) -> bool:
+        return self.status == DAUS_STATUS_APPLICABLE and self.calculation_mode == DAUS_MODE_SHAPLEY
+
+    @property
+    def participant_vectors(self) -> tuple[ParticipantShapleyAttribution, ...]:
+        """Deprecated compatibility alias for participant_attributions."""
+        return self.participant_attributions
+
+    @property
+    def total_daus_score(self) -> Decimal:
+        """Deprecated compatibility alias for total_utility_score."""
+        return self.total_utility_score
+
+
+# Deprecated compatibility aliases. New code should use the DataAsset*/Shapley names.
+DAUSContributionInput = DataAssetUtilityInput
+DAUSParticipantVector = ParticipantShapleyAttribution
+DAUSResult = DAUSShapleyResult
+DAUSUtilityConfig = DAUSShapleyConfig

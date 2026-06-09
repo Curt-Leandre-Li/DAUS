@@ -3,35 +3,25 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "daus-algorithm"
+name = "daus"
 version = "0.1.0"
-description = "Data Asset Utility Scoring algorithm for auditable contribution utility scoring."
+description = "Data Asset Utility Shapley for auditable data asset contribution attribution."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [
-  { name = "DAUS contributors" }
-]
-keywords = ["data-assets", "utility-scoring", "shapley", "audit", "allocation-simulation"]
+license = { file = "LICENSE" }
+authors = [{ name = "DAUS contributors" }]
+keywords = ["data-shapley", "shapley-value", "data-assets", "utility-function", "audit"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Scientific/Engineering :: Information Analysis",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
-dependencies = []
 
-[project.optional-dependencies]
-dev = ["pytest>=8"]
+dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
-addopts = "-p no:cacheprovider"

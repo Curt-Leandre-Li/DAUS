@@ -1,164 +1,148 @@
-# DAUS Algorithm
+# DAUS: Data Asset Utility Shapley
 
-DAUS means **Data Asset Utility Scoring**. It is an explainable and auditable contribution-utility scoring layer for multi-party data asset collaboration.
+DAUS stands for **Data Asset Utility Shapley**. It is a Shapley-value variant for data asset contribution attribution.
 
-DAUS converts standardized participant contribution evidence into participant utility scores, contribution shares, and audit records. The result can support revenue allocation simulation and negotiation, but it is **not** a final pricing decision, legal certification, or signed contract split.
+Traditional Data Shapley usually defines coalition utility as model performance:
 
-## Problem Definition
+```text
+v(S) = model performance trained or evaluated on data coalition S
+```
 
-Data collaborations often involve multiple data providers, multiple data fields, and multiple business scenarios. Simple data volume counts are not enough to explain contribution. DAUS answers a narrower question:
+DAUS replaces that model-performance target with an auditable data-asset utility score:
 
-> Given explicit contribution evidence for each participant, what is each participant's auditable utility score and normalized contribution share for simulation and negotiation?
+```text
+v_DAUS(S) = Data Asset Utility Score of coalition S
+```
 
-DAUS keeps provenance visible. It distinguishes measured contribution from expert estimate, contract agreement, and simulation.
+The result is still Shapley-style marginal contribution attribution over coalitions. DAUS is not a final contract split, a pricing engine, or a simple normalized weighted score.
 
-## Inputs
+## Why DAUS?
 
-Each `DAUSContributionInput` represents one participant's standardized contribution evidence:
+Data asset collaboration often needs explainable contribution attribution before there is enough evidence to run repeated model-training experiments. DAUS lets teams build `v(S)` from auditable contribution evidence such as quality, coverage, scarcity, sample scale, scenario fit, compliance usability, measured evidence, expert assumptions, or contract-agreed evidence.
+
+Real model contribution evidence can be one input signal, but DAUS does not require model accuracy, loss, AUC, F1, or any other training metric to define coalition utility.
+
+## Input
+
+The canonical input is `DataAssetUtilityInput`:
 
 - `participant_id`
 - `role`
-- `measured_shuyuan`
+- `measured_contribution_units`
 - `quality_score`
-- `scenario_factor`
 - `coverage_score`
 - `scarcity_score`
 - `sample_score`
-- `model_contribution_score` (optional)
-- `expert_score` (optional)
-- `contribution_source_type`
+- `scenario_fit_score`
+- `compliance_usability_score`
+- `model_contribution_score` optional
+- `expert_score` optional
+- `contribution_source_type`: `measured_data`, `expert_estimate`, `contract_agreement`, or `simulation`
 - `confidence_level`
 - `evidence`
 - `assumptions`
 
-Allowed source types:
+## Output
 
-- `measured_data`
-- `expert_estimate`
-- `contract_agreement`
-- `simulation`
+`calculate_daus(...)` returns `DAUSShapleyResult`, including:
 
-Source type is provenance only. It must not be used as a hidden scoring multiplier.
-
-## Outputs
-
-`DAUSResult` contains:
-
-- status: `applicable` or `not_applicable`
-- participant vectors
-- adjusted Shuyuan per participant
-- DAUS score per participant
-- normalized contribution share
-- whether Shapley marginal contribution was used
-- calculation mode
-- source types
-- assumptions
+- evaluated coalitions `S`
+- coalition utility scores `v(S)`
+- participant Shapley values
+- contribution shares
+- source types and confidence levels
 - audit records
-- not-applicable reason, when relevant
+- assumptions
 
 ## Mathematical Definition
 
-MVP adjusted Shuyuan:
+For participants `N`, DAUS defines a coalition utility function:
 
 ```text
-adjusted_shuyuan_i =
-  measured_shuyuan_i
-  * quality_factor_i
-  * scenario_factor_i
-  * coverage_factor_i
-  * scarcity_factor_i
-  * sample_factor_i
+v_DAUS(S) = UtilityScoreFunction(S)
 ```
 
-Score-to-factor policy:
+The default MVP utility function is additive:
 
 ```text
-factor = score / 100
+u_i = measured_contribution_units_i
+    * quality_factor_i
+    * coverage_factor_i
+    * scarcity_factor_i
+    * sample_factor_i
+    * scenario_fit_factor_i
+    * compliance_usability_factor_i
+
+v_DAUS(S) = sum(u_i for i in S)
 ```
 
-Coalition utility:
+This additive form is a special case. Under additive utility, each participant's DAUS Shapley value equals its standalone utility contribution. The API still evaluates coalitions so that non-additive utility functions can be supplied later.
+
+DAUS attribution uses the Shapley formula:
 
 ```text
-utility(S) =
-  sum(adjusted_shuyuan_i for i in S)
-  * (1 + optional_interaction_bonus(S))
-  - optional_risk_penalty(S)
+phi_i = sum over S subset N\{i} of
+        |S|! * (|N|-|S|-1)! / |N|!
+        * (v_DAUS(S union {i}) - v_DAUS(S))
 ```
-
-In the MVP, interaction bonus and risk penalty are explicit hooks and default to `0`.
 
 ## Relationship With Shapley
 
-Shapley is located inside the DAUS contribution-utility layer. It can convert coalition marginal contribution into contribution weights when model or field contribution evidence exists.
+DAUS is not a replacement for Shapley. It is a data-asset version of Shapley.
 
-If complete `model_contribution_score` evidence is supplied and Shapley mode is enabled, DAUS uses Shapley marginal contribution over the DAUS utility function. If model contribution evidence is missing, DAUS falls back to deterministic adjusted-Shuyuan mode unless Shapley is explicitly required. Required Shapley without evidence returns `not_applicable`.
+- Traditional Data Shapley: `v(S)` is model performance.
+- DAUS: `v(S)` is auditable data-asset utility.
 
-Shapley output is not a final contract split. It is a negotiation and simulation support signal.
+This distinction is important when model-performance experiments are unavailable, incomplete, expensive, or not the right governance basis.
 
 ## Quick Start
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-python3 -m pytest -q
+python3 -m pip install -e .
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
 ```
 
 ## Example
 
 ```python
 from decimal import Decimal
+from daus import DataAssetUtilityInput, calculate_daus
 
-from daus import DAUSContributionInput, calculate_daus
-
-inputs = (
-    DAUSContributionInput(
-        participant_id="hospital-a",
-        role="Hospital A",
-        measured_shuyuan=Decimal("120"),
-        quality_score=Decimal("90"),
-        scenario_factor=Decimal("1.2"),
-        coverage_score=Decimal("80"),
-        scarcity_score=Decimal("70"),
-        sample_score=Decimal("95"),
+inputs = [
+    DataAssetUtilityInput(
+        participant_id="source-a",
+        role="data_provider",
+        measured_contribution_units=Decimal("100"),
+        quality_score=Decimal("95"),
+        coverage_score=Decimal("90"),
+        scarcity_score=Decimal("80"),
+        sample_score=Decimal("100"),
         contribution_source_type="measured_data",
         confidence_level=Decimal("0.9"),
-        evidence="validated demo measurement",
-        assumptions=("Example only; not a final contract split.",),
+        evidence="validated contribution evidence batch",
     ),
-    DAUSContributionInput(
-        participant_id="hospital-b",
-        role="Hospital B",
-        measured_shuyuan=Decimal("80"),
+    DataAssetUtilityInput(
+        participant_id="source-b",
+        role="data_provider",
+        measured_contribution_units=Decimal("80"),
         quality_score=Decimal("85"),
-        scenario_factor=Decimal("1.0"),
         coverage_score=Decimal("75"),
-        scarcity_score=Decimal("60"),
-        sample_score=Decimal("90"),
+        scarcity_score=Decimal("90"),
+        sample_score=Decimal("95"),
         contribution_source_type="expert_estimate",
         confidence_level=Decimal("0.7"),
-        evidence="expert estimate for simulation",
-        assumptions=("Expert estimate pending measured model evidence.",),
+        evidence="expert-reviewed simulation evidence",
     ),
-)
+]
 
 result = calculate_daus(inputs)
-for vector in result.participant_vectors:
-    print(vector.participant_id, vector.daus_score, vector.contribution_share)
+for attribution in result.participant_attributions:
+    print(attribution.participant_id, attribution.shapley_value, attribution.contribution_share)
 ```
-
-## Integration Notes
-
-The standalone DAUS core has no runtime dependency on allocation, reporting, Shuyuan metering, databases, APIs, or UI frameworks. The copied `daus_result_to_contribution_input_batch()` function is an optional host-integration adapter retained for source compatibility with systems that provide allocation contracts. It is not required for DAUS scoring.
 
 ## Roadmap
 
-- Add documented non-additive interaction functions when product evidence exists.
-- Add optional risk penalty plugins with explicit audit semantics.
-- Add richer serialization helpers for reporting systems.
-- Add benchmark examples for healthcare, finance, and public-data collaboration.
-- Keep source-type provenance auditable and avoid hidden metadata scoring.
-
-## Non-Goals
-
-DAUS is not a pricing engine, MAR/compliance-cap module, database, authentication system, production API, legal certification system, or final contract allocation engine.
+- Additional coalition-level utility functions with interaction terms.
+- Stronger audit serialization helpers.
+- Reference examples for measured, expert-estimated, and simulation-based evidence.
+- Optional adapters in host projects, kept outside DAUS Core.

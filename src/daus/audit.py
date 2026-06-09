@@ -1,51 +1,25 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
-from .schemas import (
-    DAUSAuditRecord,
-    DAUSContributionInput,
-    DAUSResult,
-    DAUSUtilityConfig,
-)
+from .schemas import DAUSAuditRecord, DAUSShapleyConfig, DAUSShapleyResult, DataAssetUtilityInput
 
 
-def input_audit_record(
-    contribution_input: DAUSContributionInput,
-    config: DAUSUtilityConfig,
-) -> DAUSAuditRecord:
+def audit_input_record(input_item: DataAssetUtilityInput, config: DAUSShapleyConfig) -> DAUSAuditRecord:
     return DAUSAuditRecord(
-        event_type="input_validated",
-        participant_id=contribution_input.participant_id,
-        source_type=contribution_input.contribution_source_type,
-        confidence_level=contribution_input.confidence_level,
-        config=config.public_dict(),
-        assumptions=(*config.assumptions, *contribution_input.assumptions),
-        evidence=contribution_input.evidence,
-        message="DAUS contribution input validated.",
+        event_type="contribution_evidence_registered",
+        participant_id=input_item.participant_id,
+        description="Contribution evidence accepted for DAUS coalition utility evaluation.",
+        source_type=input_item.contribution_source_type,
+        config_id=config.config_id,
+        assumptions=input_item.assumptions,
     )
 
 
-def result_audit_record(
-    result: DAUSResult,
-    config: DAUSUtilityConfig,
-) -> DAUSAuditRecord:
-    source_type = result.source_types[0] if len(result.source_types) == 1 else "simulation"
+def audit_result_record(result: DAUSShapleyResult, config: DAUSShapleyConfig) -> DAUSAuditRecord:
     return DAUSAuditRecord(
-        event_type="result_finalized",
-        source_type=source_type,
-        confidence_level=_minimum_confidence(result),
-        config=config.public_dict(),
+        event_type="daus_shapley_attribution_completed",
+        participant_id=None,
+        description="DAUS Shapley attribution finalized over a data-asset utility function.",
+        source_type=None,
+        config_id=config.config_id,
         assumptions=result.assumptions,
-        message=(
-            "DAUS result finalized with Shapley marginal contribution."
-            if result.used_shapley
-            else "DAUS result finalized with adjusted-Shuyuan contribution mode."
-        ),
     )
-
-
-def _minimum_confidence(result: DAUSResult) -> Decimal:
-    if not result.participant_vectors:
-        return Decimal("0")
-    return min(vector.confidence_level for vector in result.participant_vectors)
