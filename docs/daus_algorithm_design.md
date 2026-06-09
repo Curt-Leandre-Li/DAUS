@@ -1,6 +1,6 @@
 # DAUS Algorithm Design
 
-DAUS means Data Asset Utility Scoring, or 数据资产效用评分. It is the
+DAUS means Data Asset Utility. It is the
 contribution-utility layer between Shuyuan metering and revenue allocation
 simulation.
 
